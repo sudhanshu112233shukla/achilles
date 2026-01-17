@@ -2,7 +2,7 @@ import sys
 import os
 
 # Handle both direct execution and module import
-from achilles.achilles import optimize, benchmark, run
+from achilles.achilles import optimize, benchmark, run, clean
 from achilles.printers import print_help, print_error
 from achilles.strategies import get_available_strategies, get_strategy
 
@@ -15,6 +15,7 @@ def print_usage():
     print("  benchmark   Compare performance between all optimized strategies")
     print("    --no-parallel  Disable parallel benchmarking (run strategies sequentially)")
     print("  run         Run Python code with the fastest optimized strategy")
+    print("  clean       Remove all generated build artifacts and temporary files")
     print("  list-strategies  List all available optimization strategies")
     print("\nExamples:")
     print("  achilles optimize script.py --arg1 value1")
@@ -53,6 +54,8 @@ def main():
             benchmark(script_args, use_parallel=use_parallel)
         elif command == "run":
             run(script_args)
+    elif command == "clean":
+        clean()
     elif command == "list-strategies":
         print("Available optimization strategies:")
         for name in get_available_strategies():

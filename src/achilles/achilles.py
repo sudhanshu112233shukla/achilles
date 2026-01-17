@@ -4,6 +4,7 @@ import sys
 import time
 import random
 import concurrent.futures
+import shutil
 from functools import partial
 from achilles.profiling import get_code_benchmark, profile_via_subprocess
 from achilles.agents.analysis_agent import select_functions
@@ -335,3 +336,33 @@ def benchmark(args, use_parallel=True):
         for i, func in enumerate(benchmark[:5], 1):
             print(f"  {i}. {func['func']} - {func['cumtime']:.4f}s ({func['ncalls']} calls)")
         print("\nRun 'achilles optimize' to improve performance of these functions.")
+
+def clean(args=None):
+    """Remove all generated build artifacts and temporary files."""
+    print("--- CLEANING ARTIFACTS ---")
+    
+    cleaned_count = 0
+    
+    # Remove achilles_build marker
+    if os.path.exists("achilles_build"):
+        try:
+            os.remove("achilles_build")
+            print("[OK] Removed achilles_build marker")
+            cleaned_count += 1
+        except Exception as e:
+            print_error(f"Failed to remove achilles_build: {e}")
+
+    # Remove .achilles directory
+    achilles_dir = ".achilles"
+    if os.path.exists(achilles_dir):
+        try:
+            shutil.rmtree(achilles_dir)
+            print(f"[OK] Removed {achilles_dir} directory")
+            cleaned_count += 1
+        except Exception as e:
+            print_error(f"Failed to remove {achilles_dir}: {e}")
+            
+    if cleaned_count == 0:
+        print("Nothing to clean. Workspace is already clean.")
+    else:
+        print("Workspace cleaned successfully.")
