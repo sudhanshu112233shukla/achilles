@@ -4,6 +4,9 @@ import sys
 import time
 import random
 import concurrent.futures
+import runpy
+import io
+import contextlib
 from functools import partial
 from achilles.profiling import get_code_benchmark, profile_via_subprocess
 from achilles.agents.analysis_agent import select_functions
@@ -34,8 +37,16 @@ def run(args):
     print_detail(f"Using optimization strategy: {strategy_name}")
     
     # Apply optimizations with the best strategy
+    # Apply optimizations with the best strategy
     if apply_optimizations(strategy_name):
-        subprocess.run([sys.executable] + args)
+        # Execute in-process to retain monkey-patches
+        script_path = args[0]
+        # Set sys.argv so the script sees its arguments
+        sys.argv = args
+        try:
+           runpy.run_path(script_path, run_name="__main__")
+        except SystemExit:
+           pass
 
 def optimize_with_strategy(strategy_name, selected_funcs, args, original_time, base_dir):
     """Worker function to optimize using a specific strategy"""
@@ -64,7 +75,19 @@ def optimize_with_strategy(strategy_name, selected_funcs, args, original_time, b
         print_header(f"BENCHMARKING {strategy_name.upper()}", "📊")
         start_time = time.time()
         if apply_optimizations(strategy_name):
-            subprocess.run([sys.executable] + args, check=True, capture_output=True)
+            # Capture output to simulate check=True, capture_output=True
+            f_out = io.StringIO()
+            f_err = io.StringIO()
+            sys.argv = args
+            try:
+                with contextlib.redirect_stdout(f_out), contextlib.redirect_stderr(f_err):
+                     runpy.run_path(args[0], run_name="__main__")
+            except SystemExit as e:
+                # Script might exit with 0 or non-zero
+                if e.code and e.code != 0:
+                     raise RuntimeError(f"Script exited with error: {e.code}")
+            except Exception as e:
+                 raise RuntimeError(f"Script execution failed: {e}")
         optimized_time = time.time() - start_time
         
         # Calculate and return results
@@ -240,7 +263,18 @@ def benchmark(args, use_parallel=True):
             print(f"Benchmarking {strategy_name}...")
             start_time = time.time()
             if apply_optimizations(strategy_name):
-                subprocess.run([sys.executable] + args, check=True, capture_output=True)
+                # Capture output to simulate check=True, capture_output=True
+                f_out = io.StringIO()
+                f_err = io.StringIO()
+                sys.argv = args
+                try:
+                    with contextlib.redirect_stdout(f_out), contextlib.redirect_stderr(f_err):
+                         runpy.run_path(args[0], run_name="__main__")
+                except SystemExit as e:
+                    if e.code and e.code != 0:
+                         raise RuntimeError(f"Script exited with error: {e.code}")
+                except Exception as e:
+                     raise RuntimeError(f"Script execution failed: {e}")
             optimized_time = time.time() - start_time
             
             result = BenchmarkResult(

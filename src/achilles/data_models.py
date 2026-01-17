@@ -41,8 +41,9 @@ def build_cpp_modules(optimized_functions: list[OptimizedFunction], strategy_nam
     src_dir = os.path.join(strategy_dir, "src")
     
     # Clean up any previous build for this strategy
+    import shutil
     if os.path.exists(src_dir):
-        subprocess.run(["rm", "-rf", src_dir], check=False)
+        shutil.rmtree(src_dir, ignore_errors=True)
     
     # Create directory structure
     os.makedirs(src_dir, exist_ok=True)
@@ -115,13 +116,32 @@ PYBIND11_MODULE({module_name}, m) {{
         file_path = os.path.join(src_dir, file)
         print(f"  - {os.path.basename(file_path)} (exists: {os.path.exists(file_path)})")
     
-    # Compile using uv instead of pip
-    try:
-        subprocess.check_call(["uv", "pip", "install", "-e", strategy_dir])
-    except subprocess.CalledProcessError:
-        print(f"Error: Failed to install C++ extension for {strategy_name} with uv.")
-        print("Make sure pybind11 is installed. Try running: uv pip install pybind11")
-        raise
+    # Compile using uv, falling back to pip
+    import shutil
+    uv_cmd = shutil.which("uv")
+    
+    success = False
+    if uv_cmd:
+        try:
+            print(f"Attempting build with uv: {uv_cmd}")
+            subprocess.check_call([uv_cmd, "pip", "install", "-e", strategy_dir])
+            success = True
+        except (OSError, subprocess.CalledProcessError) as e:
+            print(f"Warning: Failed to use uv ({uv_cmd}): {e}")
+            success = False
+
+    if not success:
+        print("Falling back to standard pip...")
+        cmd = [sys.executable, "-m", "pip", "install", "-e", strategy_dir]
+        print(f"Executing: {cmd}")
+        try:
+            subprocess.check_call(cmd)
+        except subprocess.CalledProcessError:
+             print(f"Error: Failed to install C++ extension for {strategy_name} with pip.")
+             raise
+        except OSError as e:
+             print(f"CRITICAL ERROR executing pip: {e}. Command: {cmd}")
+             raise
     
     # Create strategy marker file
     with open(os.path.join(strategy_dir, "achilles_build"), "w") as f:
@@ -186,8 +206,16 @@ for source in sources:
         raise ValueError(f"Source file not found: {{source}}")
 
 # Get the correct SDK path on macOS
-extra_compile_args = ['-std=c++14', '-O3']
+# Handle platform-specific compiler flags
+extra_compile_args = []
 extra_link_args = []
+
+if sys.platform == 'win32':
+    # MSVC flags
+    extra_compile_args = ['/std:c++14', '/O2']
+else:
+    # GCC/Clang flags
+    extra_compile_args = ['-std=c++14', '-O3']
 
 if sys.platform == 'darwin':
     try:
