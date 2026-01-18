@@ -7,7 +7,8 @@ import concurrent.futures
 from functools import partial
 from achilles.profiling import get_code_benchmark, profile_via_subprocess
 from achilles.agents.analysis_agent import select_functions
-from achilles.agents.cpp_agent import optimize_functions
+from achilles.agents.cpp_agent import optimize_functions, fix_cpp_code
+from achilles.exceptions import CompilationError
 from achilles.data_models import build_cpp_modules, apply_optimizations
 from achilles.printers import (
     print_header, print_check, print_warning, print_error,
@@ -57,9 +58,43 @@ def optimize_with_strategy(strategy_name, selected_funcs, args, original_time, b
                 print_detail("Recursive function detected")
             
         # Building phase
+        # Building phase
+        # Building phase
         print_header(f"BUILDING {strategy_name.upper()}", "🔧")
-        build_cpp_modules(optimized_funcs, strategy_name)
         
+        # === SELF-HEALING LOOP ===
+        MAX_RETRIES = 3
+        healing_success = False
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                build_cpp_modules(optimized_funcs, strategy_name)
+                healing_success = True
+                if attempt > 0:
+                    print_check(f"Self-healing successful on attempt {attempt}!")
+                break
+            except CompilationError as e:
+                if attempt == MAX_RETRIES:
+                    print_error(f"Compilation failed after {MAX_RETRIES} recovery attempts.")
+                    # Re-raise to let the outer exception handler gracefully fail the strategy
+                    raise
+                
+                print_warning(f"Compilation failed (Attempt {attempt + 1}/{MAX_RETRIES}). Attempting to fix...")
+                # Try to fix each function
+                # Note: Currently build_cpp_modules builds ALL funcs. 
+                # If one fails, we don't know exactly which one effectively without parsing logs.
+                # Simplistic approach: Ask LLM to fix ALL of them based on the log.
+                
+                print(f"🚑 Asking Claude to fix compilation errors...")
+                for func in optimized_funcs:
+                         # We feed the error to every function's fix request. 
+                         # Ideally we should map errors to files, but this is a good v1.
+                         new_code = fix_cpp_code(func, e.errors)
+                         func.cpp_code = new_code
+        
+        if not healing_success:
+             return None
+
         # Benchmark this strategy
         print_header(f"BENCHMARKING {strategy_name.upper()}", "📊")
         start_time = time.time()
@@ -80,7 +115,10 @@ def optimize_with_strategy(strategy_name, selected_funcs, args, original_time, b
             return result
         
     except Exception as e:
+        print(f"DEBUG: Caught exception type: {type(e)}")
+        print(f"DEBUG: Caught exception module: {type(e).__module__}")
         print_error(f"Error with strategy {strategy_name}: {str(e)}")
+        # If we failed, we simply return None, so this strategy is skipped
         return None
 
 def optimize(args, use_parallel=True):

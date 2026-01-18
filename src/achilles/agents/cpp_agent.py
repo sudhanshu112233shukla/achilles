@@ -7,9 +7,24 @@ import re
 from dotenv import load_dotenv
 from achilles.strategies import get_strategy
 
+from dotenv import load_dotenv
+
 load_dotenv()
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# Global client instance wrapper to allow mocking during tests
+_real_client = None
+MOCK_CLIENT = None
+
+def get_client():
+    global _real_client
+    if MOCK_CLIENT:
+        return MOCK_CLIENT
+    if _real_client is None:
+        _real_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    return _real_client
+
+client = None # Deprecated, use get_client() but kept for module level references if any
+
 
 PYBIND_MODULE_NAME = "_achilles_optimized_funcs"
 MODEL_NAME = "claude-3-7-sonnet-20250219"  # Updated to use the latest Claude model
@@ -48,6 +63,25 @@ Python Function Source Code:
 ```
 
 Generate the JSON output containing "cpp_code", "cpp_func_name", and "pybind_exposed_name".
+"""
+
+CPP_FIX_SYS_PROMPT = """
+You are an expert C++ programmer resolving compilation errors.
+Output the CORRECTED C++ code as a JSON object with: "cpp_code", "cpp_func_name", "pybind_exposed_name".
+Do not include explanations, just the JSON.
+"""
+
+CPP_FIX_USER_PROMPT_TEMPLATE = """
+The C++ code you generated failed to compile.
+Original Code:
+```cpp
+{original_code}
+```
+
+Compiler Error Message:
+{error_message}
+
+Please fix the error and output the complete corrected C++ code.
 """
 
 def _clean_json_response(raw_response: str) -> str:
@@ -110,7 +144,7 @@ def optimize_functions(functions: list[UnoptimizedFunction], strategy_name: str 
         )
 
         # 3. Call Anthropic API with strategy-specific settings
-        response = client.messages.create(
+        response = get_client().messages.create(
             model=strategy.model,
             max_tokens=4096,
             system=strategy.prompt_template,  # Use strategy-specific prompt
@@ -138,3 +172,31 @@ def optimize_functions(functions: list[UnoptimizedFunction], strategy_name: str 
         optimized_functions.append(optimized_func)
 
     return optimized_functions
+
+def fix_cpp_code(original_func: OptimizedFunction, error_message: str):
+    """
+    Attempts to fix broken C++ code using the LLM.
+    """
+    print(f"🚑 Attempting to self-heal code for {original_func.cpp_func_name}...")
+    
+    # Reload strategy to get correct model/params (assume matching original strategy)
+    user_prompt = CPP_FIX_USER_PROMPT_TEMPLATE.format(
+        original_code=original_func.cpp_code,
+        error_message=error_message
+    )
+    
+    response = get_client().messages.create(
+        model=MODEL_NAME, # Use same powerful model
+        max_tokens=4096,
+        system=CPP_FIX_SYS_PROMPT,
+        messages=[
+            {"role": "user", "content": user_prompt}
+        ],
+        temperature=0.2,
+    )
+
+    raw_response_content = response.content[0].text
+    cleaned_response = _clean_json_response(raw_response_content)
+    result_data = json.loads(cleaned_response)
+
+    return result_data["cpp_code"]

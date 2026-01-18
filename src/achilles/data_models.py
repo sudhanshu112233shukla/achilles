@@ -7,6 +7,7 @@ import importlib.util
 import hashlib
 from typing import Optional
 from achilles.strategies import get_strategy, get_fastest_strategy
+from achilles.exceptions import CompilationError
 
 class UnoptimizedFunction:
     def __init__(self, path, line, func, calls, cum_time):
@@ -31,7 +32,13 @@ class OptimizedFunction:
         self.pybind_exposed_name = pybind_exposed_name
 
 def build_cpp_modules(optimized_functions: list[OptimizedFunction], strategy_name: str = "standard"):
-    """Build C++ modules for a specific strategy"""
+    """
+    Builds the C++ modules using the generated setup.py files.
+    """
+    
+    if not optimized_functions:
+        print(f"DEBUG: No optimized functions provided for strategy {strategy_name}. Skipping C++ module build.")
+        return
     
     strategy = get_strategy(strategy_name)
     
@@ -116,11 +123,43 @@ PYBIND11_MODULE({module_name}, m) {{
         print(f"  - {os.path.basename(file_path)} (exists: {os.path.exists(file_path)})")
     
     # Compile using uv instead of pip
+    # Compile using uv instead of pip
     try:
-        subprocess.check_call(["uv", "pip", "install", "-e", strategy_dir])
-    except subprocess.CalledProcessError:
-        print(f"Error: Failed to install C++ extension for {strategy_name} with uv.")
-        print("Make sure pybind11 is installed. Try running: uv pip install pybind11")
+        # Use subprocess.run to capture output for better error messages
+        result = subprocess.run(
+            ["uv", "pip", "install", "-e", strategy_dir],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode != 0:
+            error_msg = f"Failed to install C++ extension for {strategy_name}.\nOutput:\n{result.stderr}"
+            raise CompilationError(error_msg, result.stderr)
+            
+    except FileNotFoundError:
+        # Fallback to pip if uv is not found
+        try:
+            print(f"uv not found, falling back to pip for {strategy_name}...")
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-e", strategy_dir],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False
+            )
+            if result.returncode != 0:
+                error_msg = f"Failed to install C++ extension for {strategy_name} with pip.\nOutput:\n{result.stderr}"
+                raise CompilationError(error_msg, result.stderr)
+
+        except subprocess.CalledProcessError as e:
+             # Should be covered by the check=False/returncode check above, but for safety
+             raise CompilationError(f"Pip install failed: {str(e)}", str(e))
+    except CompilationError:
+        raise
+    except Exception as e:
+        print(f"Error: Failed to install C++ extension for {strategy_name}.")
+        print(f"Details: {str(e)}")
         raise
     
     # Create strategy marker file
